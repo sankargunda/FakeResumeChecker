@@ -6,22 +6,18 @@ import PyPDF2
 import streamlit as st
 import platform
 
-# 💬 Optional Windows-only support for `.doc` files
+# Windows-specific import for .doc file handling
 if platform.system() == "Windows":
     import win32com.client
 
 # === CONFIGURATION ===
-# 💬 Define important paths used for input/output and uploaded file temp location
 BASE_PATH = os.path.dirname(__file__)
-RESUME_FOLDER = os.path.join(BASE_PATH, "resumes")
 FAKE_COMPANY_LIST_PATH = os.path.join(BASE_PATH, "fake_companies.xlsx")
 GENUINE_OUTPUT = os.path.join(BASE_PATH, "Genuine_Results.xlsx")
 FAKE_OUTPUT = os.path.join(BASE_PATH, "Fake_Results.xlsx")
 TEMP_RESUME_PATH = os.path.join(BASE_PATH, "temp_uploaded_resume")
 
-# === HELPER FUNCTIONS ===
-
-# 💬 Extract text from DOCX format
+# === TEXT EXTRACTORS ===
 def extract_text_from_docx(file_path):
     try:
         doc = docx.Document(file_path)
@@ -30,7 +26,6 @@ def extract_text_from_docx(file_path):
         st.error(f"Error reading DOCX: {e}")
         return ""
 
-# 💬 Extract text from PDF format
 def extract_text_from_pdf(file_path):
     try:
         with open(file_path, "rb") as f:
@@ -40,10 +35,9 @@ def extract_text_from_pdf(file_path):
         st.error(f"Error reading PDF: {e}")
         return ""
 
-# 💬 Extract text from DOC (old MS Word format) – Windows only
 def extract_text_from_doc(file_path):
     if platform.system() != "Windows":
-        st.warning("Skipping .doc file: Not supported on Streamlit Cloud.")
+        st.warning("Skipping .doc file: Not supported on non-Windows.")
         return ""
     try:
         word = win32com.client.Dispatch("Word.Application")
@@ -57,22 +51,48 @@ def extract_text_from_doc(file_path):
         st.error(f"Error reading DOC: {e}")
         return ""
 
-# 💬 Check for full match of any fake company name in the resume text
-def is_fake_resume(text, fake_companies):
-    lines = text.splitlines()
-    for line in lines:
-        words_in_line = re.findall(r'\b\w[\w&.\-/]*\b', line.lower())
-        for fake in fake_companies:
-            if fake.lower() in [" ".join(words_in_line[i:i+len(fake.split())]) for i in range(len(words_in_line))]:
-                return True, fake, line.strip()
-    return False, "", ""
-
-# 💬 Load fake company names from Excel
+# === LOAD FAKE COMPANIES (only Column A) ===
 def load_fake_companies():
-    df = pd.read_excel(FAKE_COMPANY_LIST_PATH)
+    df = pd.read_excel(FAKE_COMPANY_LIST_PATH, usecols=[0])  # Only first column
     return df.iloc[:, 0].dropna().astype(str).str.strip().str.lower().tolist()
 
-# 💬 Save results to appropriate Excel (Fake/Genuine)
+# === FAKE CHECK LOGIC ===
+def is_fake_resume(text, fake_companies):
+    experience_keywords = [
+        "currently", "working", "worked", "experience", "organization",
+        "employer", "present", "joined", "serving", "professional", "company",
+        "designation", "employment", "role", "project", "duration", "job",
+        "position", "responsible", "team", "career", "contributed", "served", "assigned"
+    ]
+
+    def normalize(s):
+        return re.sub(r"[^\w\s]", "", s).lower().strip()
+
+    lines = text.splitlines()
+    normalized_fakes = [normalize(fake) for fake in fake_companies]
+
+    # Check lines with experience-related keywords
+    keyword_lines = [line for line in lines if any(kw in line.lower() for kw in experience_keywords)]
+
+    if keyword_lines:
+        for line in keyword_lines:
+            norm_line = normalize(line)
+            for fake in normalized_fakes:
+                if re.search(r'\b' + re.escape(fake) + r'\b', norm_line):
+                    return True, fake, line.strip()
+    else:
+        # Check all lines word-by-word for exact match
+        for line in lines:
+            words_in_line = re.findall(r'\b[\w&.\-/]+\b', line.lower())
+            for fake in normalized_fakes:
+                fake_words = fake.split()
+                for i in range(len(words_in_line) - len(fake_words) + 1):
+                    if words_in_line[i:i + len(fake_words)] == fake_words:
+                        return True, fake, line.strip()
+
+    return False, "", ""
+
+# === EXPORT RESULT TO EXCEL ===
 def save_result_to_excel(resume_name, result, matched_company="", line=""):
     if result == "FAKE":
         df = pd.DataFrame([{
@@ -96,21 +116,16 @@ def save_result_to_excel(resume_name, result, matched_company="", line=""):
         df.to_excel(GENUINE_OUTPUT, index=False)
 
 # === STREAMLIT UI ===
-st.set_page_config(page_title="Resume Screening – Company Legitimacy Check", layout="centered")
+st.set_page_config(page_title="Resume Validator", layout="centered")
 st.markdown("<h3 style='text-align: center;'>📄 Resume Validator – Fake Company Detection</h3>", unsafe_allow_html=True)
 
-
-# 💬 Upload box for the resume file
 uploaded_file = st.file_uploader("Upload Resume (.pdf, .docx, .doc)", type=["pdf", "docx", "doc"])
 
 if uploaded_file is not None:
-    # 💬 Save the uploaded file temporarily
     with open(TEMP_RESUME_PATH, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
     ext = uploaded_file.name.lower().split(".")[-1]
-
-    # 💬 Extract text based on file extension
     if ext == "pdf":
         text = extract_text_from_pdf(TEMP_RESUME_PATH)
     elif ext == "docx":
@@ -121,18 +136,15 @@ if uploaded_file is not None:
         st.error("Unsupported file format")
         st.stop()
 
-    # 💬 Load fake companies and validate resume
     fake_companies = load_fake_companies()
-    is_fake, matched_company, line = is_fake_resume(text, fake_companies)
+    is_fake, matched_company, matched_line = is_fake_resume(text, fake_companies)
 
-    # 💬 Show results on the UI and save to Excel
     if is_fake:
         st.error(f"❌ FAKE: Found '{matched_company}'")
-        st.code(line)
-        save_result_to_excel(uploaded_file.name, "FAKE", matched_company, line)
+        st.code(matched_line)
+        save_result_to_excel(uploaded_file.name, "FAKE", matched_company, matched_line)
     else:
         st.success("✅ GENUINE Resume")
         save_result_to_excel(uploaded_file.name, "GENUINE")
 
-    # 💬 Delete the temporary resume
     os.remove(TEMP_RESUME_PATH)
