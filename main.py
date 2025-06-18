@@ -6,16 +6,16 @@ import PyPDF2
 import streamlit as st
 import platform
 
-# Windows-specific import for .doc file handling
-if platform.system() == "Windows":
-    import win32com.client
-
 # === CONFIGURATION ===
 BASE_PATH = os.path.dirname(__file__)
 FAKE_COMPANY_LIST_PATH = os.path.join(BASE_PATH, "fake_companies.xlsx")
 GENUINE_OUTPUT = os.path.join(BASE_PATH, "Genuine_Results.xlsx")
 FAKE_OUTPUT = os.path.join(BASE_PATH, "Fake_Results.xlsx")
 TEMP_RESUME_PATH = os.path.join(BASE_PATH, "temp_uploaded_resume")
+
+# === WINDOWS-ONLY SUPPORT FOR .doc FILES ===
+if platform.system() == "Windows":
+    import win32com.client
 
 # === TEXT EXTRACTORS ===
 def extract_text_from_docx(file_path):
@@ -51,48 +51,46 @@ def extract_text_from_doc(file_path):
         st.error(f"Error reading DOC: {e}")
         return ""
 
-# === LOAD FAKE COMPANIES (only Column A) ===
+# === LOAD FAKE COMPANIES FROM EXCEL (Only Column A) ===
 def load_fake_companies():
-    df = pd.read_excel(FAKE_COMPANY_LIST_PATH, usecols=[0])  # Only first column
+    df = pd.read_excel(FAKE_COMPANY_LIST_PATH, usecols=[0])
     return df.iloc[:, 0].dropna().astype(str).str.strip().str.lower().tolist()
 
-# === FAKE CHECK LOGIC ===
+# === NORMALIZATION FUNCTION TO REMOVE PUNCTUATION & LOWERCASE ===
+def normalize(s):
+    return re.sub(r"[^\w\s]", "", s).lower().strip()
+
+# === FAKE DETECTION LOGIC ===
 def is_fake_resume(text, fake_companies):
-    experience_keywords = [
-        "currently", "working", "worked", "experience", "organization",
-        "employer", "present", "joined", "serving", "professional", "company",
-        "designation", "employment", "role", "project", "duration", "job",
-        "position", "responsible", "team", "career", "contributed", "served", "assigned"
-    ]
-
-    def normalize(s):
-        return re.sub(r"[^\w\s]", "", s).lower().strip()
-
     lines = text.splitlines()
     normalized_fakes = [normalize(fake) for fake in fake_companies]
 
-    # Check lines with experience-related keywords
-    keyword_lines = [line for line in lines if any(kw in line.lower() for kw in experience_keywords)]
+    # Common delimiters used when mentioning company names in resumes
+    delimiters = [
+        ',', ';', ' at ', ' with ', ' in ', '|', 'joined', 'organization',
+        'experience', 'worked', 'working', 'currently', 'employer', 'company',
+        'firm', 'served', 'project'
+    ]
 
-    if keyword_lines:
-        for line in keyword_lines:
-            norm_line = normalize(line)
+    # Splits a line into chunks that could represent company names
+    def split_entities(line):
+        for d in delimiters:
+            line = line.replace(d, '|')
+        return [e.strip() for e in line.split('|') if e.strip()]
+
+    # Check each line in the resume
+    for line in lines:
+        entities = split_entities(line)
+        for entity in entities:
+            norm_entity = normalize(entity)
             for fake in normalized_fakes:
-                if re.search(r'\b' + re.escape(fake) + r'\b', norm_line):
+                # Match if the full normalized name matches or starts with the fake name
+                if norm_entity == fake or norm_entity.startswith(fake + ' '):
                     return True, fake, line.strip()
-    else:
-        # Check all lines word-by-word for exact match
-        for line in lines:
-            words_in_line = re.findall(r'\b[\w&.\-/]+\b', line.lower())
-            for fake in normalized_fakes:
-                fake_words = fake.split()
-                for i in range(len(words_in_line) - len(fake_words) + 1):
-                    if words_in_line[i:i + len(fake_words)] == fake_words:
-                        return True, fake, line.strip()
 
     return False, "", ""
 
-# === EXPORT RESULT TO EXCEL ===
+# === SAVE RESULTS TO EXCEL ===
 def save_result_to_excel(resume_name, result, matched_company="", line=""):
     if result == "FAKE":
         df = pd.DataFrame([{
