@@ -271,18 +271,20 @@ if uploaded_files:
                 genuine_resume_paths.append(resume_path)
 
         if len(genuine_resume_paths) == 1:
-            # Only one genuine resume: provide a styled download link
             resume_path = genuine_resume_paths[0]
             resume_name = os.path.basename(resume_path)
-            with open(resume_path, "rb") as f:
-                data = f.read()
-                b64 = base64.b64encode(data).decode()
-                href = f'''
-                    <a href="data:application/octet-stream;base64,{b64}" download="{resume_name}" class="simple-download-link">
-                        ⬇️ Download {resume_name}
-                    </a>
-                '''
-                st.markdown(href, unsafe_allow_html=True)
+            if os.path.exists(resume_path):
+                with open(resume_path, "rb") as f:
+                    data = f.read()
+                    b64 = base64.b64encode(data).decode()
+                    href = f'''
+                        <a href="data:application/octet-stream;base64,{b64}" download="{resume_name}" class="simple-download-link">
+                            ⬇️ Download {resume_name}
+                        </a>
+                    '''
+                    st.markdown(href, unsafe_allow_html=True)
+            else:
+                st.warning(f"File {resume_path} not found.")
         elif len(genuine_resume_paths) > 1:
             # More than one: provide a ZIP download
             zip_buffer = io.BytesIO()
