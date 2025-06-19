@@ -3,6 +3,3 @@ pandas
 python-docx
 openpyxl
 PyPDF2
-zipfile
-textract
-pywin32
