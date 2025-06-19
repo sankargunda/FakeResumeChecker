@@ -263,34 +263,25 @@ if uploaded_files:
         st.table(df_genuine)
         save_result_to_excel(df_genuine, GENUINE_OUTPUT)
 
-        genuine_resume_paths = []
-        for row in genuine_rows:
-            resume_name = row["Resume"]
-            resume_path = os.path.join("resumes", resume_name)
-            if os.path.exists(resume_path):
-                genuine_resume_paths.append(resume_path)
+        genuine_resume_files = [
+            (row["Resume"], f) for row, f in zip(genuine_rows, uploaded_files) if row["Resume"] == f.name
+        ]
 
-        if len(genuine_resume_paths) == 1:
-            resume_path = genuine_resume_paths[0]
-            resume_name = os.path.basename(resume_path)
-            if os.path.exists(resume_path):
-                with open(resume_path, "rb") as f:
-                    data = f.read()
-                    b64 = base64.b64encode(data).decode()
-                    href = f'''
-                        <a href="data:application/octet-stream;base64,{b64}" download="{resume_name}" class="simple-download-link">
-                            ⬇️ Download {resume_name}
-                        </a>
-                    '''
-                    st.markdown(href, unsafe_allow_html=True)
-            else:
-                st.warning(f"File {resume_path} not found.")
-        elif len(genuine_resume_paths) > 1:
-            # More than one: provide a ZIP download
+        if len(genuine_resume_files) == 1:
+            resume_name, file_obj = genuine_resume_files[0]
+            data = file_obj.getbuffer()
+            b64 = base64.b64encode(data).decode()
+            href = f'''
+                <a href="data:application/octet-stream;base64,{b64}" download="{resume_name}" class="simple-download-link">
+                    ⬇️ Download {resume_name}
+                </a>
+            '''
+            st.markdown(href, unsafe_allow_html=True)
+        elif len(genuine_resume_files) > 1:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-                for file_path in genuine_resume_paths:
-                    zip_file.write(file_path, arcname=os.path.basename(file_path))
+                for resume_name, file_obj in genuine_resume_files:
+                    zip_file.writestr(resume_name, file_obj.getbuffer())
             zip_buffer.seek(0)
             st.download_button(
                 label="Download All Genuine Resumes as ZIP",
