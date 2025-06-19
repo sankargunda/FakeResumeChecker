@@ -8,7 +8,6 @@ import platform
 import zipfile
 import base64
 import io
-import textract
 import tempfile
 
 
