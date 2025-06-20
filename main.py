@@ -4,11 +4,13 @@ import pandas as pd
 import docx
 import PyPDF2
 import streamlit as st
-import platform
 import zipfile
-import base64
 import io
+import base64
+import time
 import tempfile
+import shutil
+import subprocess
 
 
 # === CONFIGURATION ===
@@ -38,32 +40,26 @@ def extract_text_from_pdf(file_path):
         return ""
 
 def extract_text_from_doc(file_path):
-    if platform.system() != "Windows":
-        st.warning("Skipping .doc file: Not supported on non-Windows.")
+    if shutil.which("soffice") is None:
+        st.error("LibreOffice (soffice) is not installed or not in PATH. Please install LibreOffice to process .doc files.")
         return ""
     try:
-        import pythoncom
-        import win32com.client
-        import os
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".doc") as tmp_file:
-            tmp_path = tmp_file.name
-            tmp_file.write(uploaded_file.read())
-        pythoncom.CoInitialize()
-        word = win32com.client.Dispatch("Word.Application")
-        word.Visible = False
-        doc = word.Documents.Open(tmp_path)
-        text = doc.Content.Text
-        doc.Close(False)
-        word.Quit()
-        os.remove(tmp_path)
-        return text
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subprocess.run([
+                "soffice", "--headless", "--convert-to", "txt:Text", "--outdir", tmpdir, file_path
+            ], check=True)
+            base = os.path.splitext(os.path.basename(file_path))[0]
+            converted_txt = os.path.join(tmpdir, base + ".txt")
+            with open(converted_txt, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
     except Exception as e:
-        st.error(f"Error reading DOC: {e}")
+        st.error(f"Error extracting DOC with LibreOffice: {e}")
         return ""
 
 # === LOAD FAKE COMPANIES FROM EXCEL (Only Column A) ===
 def load_fake_companies():
     df = pd.read_excel(FAKE_COMPANY_LIST_PATH, usecols=[0])
+    print(df.head())
     return df.iloc[:, 0].dropna().astype(str).str.strip().str.lower().tolist()
 
 # === NORMALIZATION FUNCTION TO REMOVE PUNCTUATION & LOWERCASE ===
@@ -105,52 +101,81 @@ def save_result_to_excel(df, output_path):
             pass
     df.to_excel(output_path, index=False)
 
-# === VISUAL ENHANCEMENTS ===
-st.set_page_config(page_title="Resume Validator", layout="centered")
-
+# === VISUAL ENHANCEMENTS: CSS STYLES ===
+# All custom styles are now included directly in main.py.
 st.markdown("""
     <style>
-    /* Removed custom background color, will use Streamlit default */
-    /* body, .stApp, .block-container, .main, .css-18e3th9, .css-1d391kg {
-        background-color: #F0F9FF !important;
-    } */
+    /* Main Title and Subtitle */
     .title-text {
         text-align: center;
         font-size: 42px;
         font-weight: bold;
-        color: #0F172A;
+        color: #2C5282;
         margin-bottom: 0.2em;
     }
     .subtitle-text {
         text-align: center;
         font-size: 20px;
-        color: #334155;
+        color: #718096;
         margin-bottom: 2em;
     }
-    label[for^="file_uploader"] {
-        color: #0F172A !important;
-        font-weight: 600 !important;
-        font-size: 1.1rem !important;
-        display: block !important;
-        margin-bottom: 1em !important;
-    }
-    [data-testid="stFileUploadDropzone"] {
-        background: linear-gradient(145deg, #EFF6FF, #DBEAFE) !important;
-        border: 2px dashed #3B82F6 !important;
-        border-radius: 14px !important;
-        padding: 25px !important;
-    }
-    [data-testid="stFileUploadDropzone"] * {
-        color: #1E3A8A !important;
+    /* Upload label */
+    label[data-testid="stFileUploaderLabel"] {
+        color: #4A5568 !important;
         font-size: 1rem !important;
         font-weight: 500 !important;
     }
+    /* Drag-and-drop area */
+    section[data-testid="stFileUploadDropzone"] {
+        background-color: #F7FAFC !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 0.5rem !important;
+    }
+    /* Text inside the dropzone */
+    section[data-testid="stFileUploadDropzone"] * {
+        color: #4A5568 !important;
+    }
+    /* "Browse files" button */
+    button[title="Browse files"] {
+        background-color: #FFFFFF !important;
+        color: #4A5568 !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 0.5rem !important;
+    }
+    button[title="Browse files"]:hover {
+        background-color: #F7FAFC !important;
+        color: #2D3748 !important;
+        border-color: #CBD5E0 !important;
+    }
+    /* Table and download link styles */
+    .custom-table {
+        font-family: 'Segoe UI', Arial, sans-serif;
+        font-size: 16px;
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: auto;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .custom-table th, .custom-table td {
+        border: 1px solid #ddd;
+        padding: 12px 10px;
+        text-align: left;
+        vertical-align: top;
+        max-width: 320px;
+        word-break: break-word;
+        white-space: pre-line;
+    }
     .custom-table th {
-        background-color: #E0F2FE;
-        color: #1E3A8A;
+        background-color: transparent !important;
+        color: #2C5282 !important;
+        font-weight: bold !important;
+        white-space: nowrap !important;
+    }
+    .custom-table td:hover, .custom-table th:hover, td:hover, th:hover {
+        background-color: #C6F6D5 !important;
     }
     .custom-table tr:hover {
-        background-color: #F0F9FF;
+        background-color: #F7FAFC;
     }
     .tao-logo-absolute {
         position: fixed;
@@ -158,6 +183,49 @@ st.markdown("""
         left: 0;
         width: 180px;
         z-index: 9999;
+    }
+    .download-zip-btn {
+        background-color: #EBF8FF !important;
+        color: #2C5282 !important;
+        border: 1px solid #BEE3F8 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 10px 18px !important;
+        font-size: 1rem !important;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 8px rgba(44,82,130,0.04);
+        transition: background 0.2s, color 0.2s;
+    }
+    .download-zip-btn:hover {
+        background-color: #BEE3F8 !important;
+        color: #2C5282 !important;
+    }
+    /* Target the Streamlit download button by its key */
+    button[data-testid="baseButton-download-zip-btn-real"] {
+        background-color: #EBF8FF !important;
+        color: #2C5282 !important;
+        border: 1px solid #BEE3F8 !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        padding: 10px 18px !important;
+        font-size: 1rem !important;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 8px rgba(44,82,130,0.04);
+        transition: background 0.2s, color 0.2s;
+    }
+    button[data-testid="baseButton-download-zip-btn-real"]:hover {
+        background-color: #BEE3F8 !important;
+        color: #2C5282 !important;
+    }
+    .genuine-title {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #2C5282;
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.5em;
     }
     </style>
     <img src='https://i.postimg.cc/GtzH6R0W/image.jpg' class='tao-logo-absolute' />
@@ -188,7 +256,7 @@ if uploaded_files:
         elif ext == "docx":
             text = extract_text_from_docx(temp_file_path)
         elif ext == "doc":
-            text = extract_text_from_doc(uploaded_file)
+            text = extract_text_from_doc(temp_file_path)
         else:
             st.error(f"Unsupported file format: {uploaded_file.name}")
             continue
@@ -203,16 +271,19 @@ if uploaded_files:
                 "Result": "FAKE"
             }
             fake_rows.append(row)
-            print(f"❌ {uploaded_file.name} FAKE -> {matched_company}")
         else:
             row = {
                 "Resume": uploaded_file.name,
                 "Result": "GENUINE"
             }
             genuine_rows.append(row)
-            print(f"✅ {uploaded_file.name} GENUINE")
 
-        os.remove(temp_file_path)
+        for _ in range(3):
+            try:
+                os.remove(temp_file_path)
+                break
+            except PermissionError:
+                time.sleep(0.5)
 
     # === Display Fake Resumes Table ===
     if fake_rows:
@@ -221,14 +292,6 @@ if uploaded_files:
         st.markdown("### ❌ Fake Resumes")
 
         table_html = (
-            "<style>"
-            ".custom-table {font-size: 16px; border-collapse: collapse; width: 100%; table-layout: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.04);}"
-            ".custom-table th, .custom-table td {border: 1px solid #ddd; padding: 12px 10px; text-align: left; vertical-align: top; max-width: 320px; word-break: break-word; white-space: pre-line;}"
-            ".custom-table th {background-color: #f2f2f2; font-weight: bold; color: #22223b;}"
-            ".custom-table tr:nth-child(even){background-color: #f9f9f9;}"
-            ".custom-table tr:hover {background-color: #e3f2fd;}"
-            ".custom-table td.ellipsis {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; cursor: pointer;}"
-            "</style>"
             "<table class='custom-table'>"
             "<tr>"
             "<th>Resume</th>"
@@ -245,7 +308,7 @@ if uploaded_files:
             table_html += (
                 f"<tr>"
                 f"<td title='{resume}'>{resume}</td>"
-                f"<td style='color:red;font-weight:bold;'>{result}</td>"
+                f"<td style='color:#2C5282;font-weight:bold;'>{result}</td>"
                 f"<td title='{fake_company}'>{fake_company}</td>"
                 f"<td title='{line}'>{line}</td>"
                 f"</tr>"
@@ -259,33 +322,57 @@ if uploaded_files:
     if genuine_rows:
         df_genuine = pd.DataFrame(genuine_rows)
         df_genuine = df_genuine[["Resume", "Result"]]
-        st.markdown('<div class="section-title">✅ Genuine Resumes</div>', unsafe_allow_html=True)
-        st.table(df_genuine)
+        df_genuine.insert(0, "S. No", range(1, len(df_genuine) + 1))
+        st.markdown('<div class="genuine-title">✅ Genuine Resumes</div>', unsafe_allow_html=True)
+        # Custom HTML table for consistent styling
+        table_html = (
+            "<table class='custom-table'>"
+            "<tr>"
+            "<th>S. No</th>"
+            "<th>Resume</th>"
+            "<th>Result</th>"
+            "</tr>"
+        )
+        for i, row in df_genuine.iterrows():
+            sno = row['S. No']
+            resume = row['Resume']
+            result = row['Result']
+            table_html += (
+                f"<tr>"
+                f"<td>{sno}</td>"
+                f"<td title='{resume}'>{resume}</td>"
+                f"<td style='color:#2C5282;font-weight:bold;'>{result}</td>"
+                f"</tr>"
+            )
+        table_html += "</table>"
+        st.markdown(table_html, unsafe_allow_html=True)
         save_result_to_excel(df_genuine, GENUINE_OUTPUT)
 
-        genuine_resume_files = [
-            (row["Resume"], f) for row, f in zip(genuine_rows, uploaded_files) if row["Resume"] == f.name
-        ]
+        # --- CORRECTED DOWNLOAD LOGIC ---
+        # Get a list of the actual uploaded file objects that are genuine
+        genuine_names = {row["Resume"] for row in genuine_rows}
+        genuine_files = [f for f in uploaded_files if f.name in genuine_names]
 
-        if len(genuine_resume_files) == 1:
-            resume_name, file_obj = genuine_resume_files[0]
-            data = file_obj.getbuffer()
+        if len(genuine_files) == 1:
+            # Only one genuine resume: provide a plain download link (no button, no custom style)
+            genuine_file = genuine_files[0]
+            resume_name = genuine_file.name
+            data = genuine_file.getvalue()
             b64 = base64.b64encode(data).decode()
-            href = f'''
-                <a href="data:application/octet-stream;base64,{b64}" download="{resume_name}" class="simple-download-link">
-                    ⬇️ Download {resume_name}
-                </a>
-            '''
+            href = f'<a href="data:application/octet-stream;base64,{b64}" download="{resume_name}">{resume_name}</a>'
             st.markdown(href, unsafe_allow_html=True)
-        elif len(genuine_resume_files) > 1:
+        elif len(genuine_files) > 1:
+            # More than one: provide a ZIP download
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-                for resume_name, file_obj in genuine_resume_files:
-                    zip_file.writestr(resume_name, file_obj.getbuffer())
-            zip_buffer.seek(0)
+                for genuine_file in genuine_files:
+                    # Add file to the zip using its name and in-memory content
+                    zip_file.writestr(genuine_file.name, genuine_file.getvalue())
+
             st.download_button(
                 label="Download All Genuine Resumes as ZIP",
                 data=zip_buffer,
                 file_name="genuine_resumes.zip",
-                mime="application/zip"
-            )
+                mime="application/zip",
+                key="download-zip-btn-real"
+            ) 
